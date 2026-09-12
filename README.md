@@ -109,6 +109,14 @@ still has whatever permissions it was granted. Prompt-level read-only intent
 therefore cannot establish that an accepted run was side-effect-free and must
 not be used as justification for timeout replay.
 
+A leaf-designated terminal `read ETIMEDOUT` ends the current `oracle-pr-loop`
+invocation. The orchestrator must not present automatic replay or an in-place
+resume as available. If the caller later explicitly starts a new top-level
+`oracle-pr-loop` invocation, treat it as a new workflow: freeze the PR's
+then-current head, re-read durable GitHub feedback, and run the normal
+review/triage flow without carrying forward indeterminate leaf output or
+other timeout-local state.
+
 `oracle-pr-review` also never replays a timed-out review, because publication
 may already have happened. Each review prompt carries a unique hidden
 correlation marker in its top-level GitHub review body. After an exact read

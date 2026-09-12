@@ -2,25 +2,24 @@
 
 `oracle-pr-loop` is a self-contained agent-skill workflow for taking GitHub
 work through independent Oracle/ChatGPT review, starting from an open Issue
-or an existing pull request. It is composed from four small, single-purpose
-local skills instead of a custom Python review/submit engine.
+or an existing pull request. The loop uses Oracle for Issue planning and PR
+review, while the host agent triages durable GitHub feedback and applies fixes.
 
 [![CI/CD](https://github.com/dceoy/oracle-pr-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/dceoy/oracle-pr-loop/actions/workflows/ci.yml)
 
 ## Skills
 
-- [`oracle-pr-loop`](skills/oracle-pr-loop/SKILL.md) — orchestrates the other
-  three skills and the main agent's own implementation, QA, and Git/GitHub
-  actions. This is the entry point.
+- [`oracle-pr-loop`](skills/oracle-pr-loop/SKILL.md) — orchestrates the two
+  required Oracle leaves plus the main agent's own feedback triage,
+  implementation, QA, and Git/GitHub actions. This is the entry point.
 - [`oracle-issue-plan`](skills/oracle-issue-plan/SKILL.md) — turns one or more
   same-repository GitHub Issues into one advisory implementation plan via
   Oracle browser mode and ChatGPT's connected GitHub app.
 - [`oracle-pr-review`](skills/oracle-pr-review/SKILL.md) — reviews one exact
   pull-request head the same way, prioritizing inline review comments.
 - [`oracle-pr-feedback-plan`](skills/oracle-pr-feedback-plan/SKILL.md) —
-  reads that review's existing GitHub feedback the same way and returns
-  advisory dispositions and decision-complete fix plans; it makes no
-  repository or GitHub mutation.
+  optionally cross-checks existing GitHub feedback through Oracle. It remains
+  a standalone read-only skill and is not required by `oracle-pr-loop`.
 
 ## Workflow
 
@@ -36,21 +35,25 @@ local skills instead of a custom Python review/submit engine.
 
 **Existing PR** — enter directly at:
 
-1. `oracle-pr-review` reviews the exact current PR head.
-2. `oracle-pr-feedback-plan` triages that review's existing GitHub feedback
-   and returns advisory dispositions and decision-complete fix plans; it
-   makes no repository or GitHub mutation itself.
-3. The main agent validates that advice, implements accepted fixes, runs QA,
-   publishes the fix, and replies to/resolves review threads.
+1. `oracle-pr-review` reviews the exact current PR head and publishes the
+   result durably on GitHub.
+2. The main agent snapshots all durable GitHub feedback, classifies each item,
+   validates the dispositions against current code, and builds any required
+   fix plan.
+3. The main agent implements accepted fixes, runs QA, publishes the fix, and
+   replies to/resolves review threads.
 4. If a fix was published, the PR head changed — run `oracle-pr-review` again
    on the new head and repeat.
-5. Finish when a review/triage cycle leaves no actionable feedback with the
-   head unchanged. An unchanged head is never re-reviewed.
+5. On the same head, new or edited feedback triggers host-agent re-triage only;
+   finish when the durable feedback state is stable and no actionable feedback
+   remains.
 
 Stop and report — rather than continuing or fabricating progress — when
 triage needs clarification, records a deliberate defer/won't-fix, has an
 unpublished or unverified fix, hits an authentication/permission failure, or
-hits another explicit blocker.
+hits another explicit blocker. A standalone `oracle-pr-feedback-plan` failure
+does not block `oracle-pr-loop` because that skill is no longer in the loop's
+critical path.
 
 ## Discovery
 
@@ -109,14 +112,19 @@ still has whatever permissions it was granted. Prompt-level read-only intent
 therefore cannot establish that an accepted run was side-effect-free and must
 not be used as justification for timeout replay.
 
-A leaf-designated terminal `read ETIMEDOUT` ends the current `oracle-pr-loop`
-invocation. The orchestrator must not present automatic replay or an in-place
-resume as available. If the caller later explicitly starts a new top-level
-`oracle-pr-loop` invocation, it starts a new workflow from durable GitHub state
-for the original entry path: before PR creation, restart issue planning from
-the current Issue state; for an existing PR or after PR creation, freeze the
-then-current PR head, re-read feedback, and run the normal review/triage flow.
-Do not carry forward indeterminate leaf output or other timeout-local state.
+A terminal `read ETIMEDOUT` from a required Oracle leaf ends the current
+`oracle-pr-loop` invocation. For `oracle-issue-plan`, any such terminal timeout
+is blocking. For `oracle-pr-review`, the timeout is blocking only when its
+persisted review-marker recovery cannot prove publication. The orchestrator
+must not present automatic replay or an in-place resume as available. If the
+caller later explicitly starts a new top-level `oracle-pr-loop` invocation,
+it starts a new workflow from durable GitHub state for the original entry path:
+before PR creation, restart issue planning from the current Issue state; for an
+existing PR or after PR creation, freeze the then-current PR head, re-read
+durable feedback, and run the normal PR review flow. Do not carry forward
+indeterminate leaf output or other timeout-local state. The loop does not invoke
+`oracle-pr-feedback-plan`, so transport failure in that optional standalone
+skill cannot stop PR review/fix progress.
 
 `oracle-pr-review` also never replays a timed-out review, because publication
 may already have happened. Each review prompt carries a unique hidden

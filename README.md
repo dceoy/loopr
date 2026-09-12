@@ -112,12 +112,19 @@ still has whatever permissions it was granted. Prompt-level read-only intent
 therefore cannot establish that an accepted run was side-effect-free and must
 not be used as justification for timeout replay.
 
-A terminal `read ETIMEDOUT` from a required Oracle leaf can stop the current
-`oracle-pr-loop` invocation. In the Issue-started path this can still occur in
-`oracle-issue-plan`. In the PR loop, `oracle-pr-review` uses its persisted
-review marker recovery before a timeout is considered blocking. The loop does
-not invoke `oracle-pr-feedback-plan`, so transport failure in that optional
-standalone skill cannot stop PR review/fix progress.
+A terminal `read ETIMEDOUT` from a required Oracle leaf ends the current
+`oracle-pr-loop` invocation. For `oracle-issue-plan`, any such terminal timeout
+is blocking. For `oracle-pr-review`, the timeout is blocking only when its
+persisted review-marker recovery cannot prove publication. The orchestrator
+must not present automatic replay or an in-place resume as available. If the
+caller later explicitly starts a new top-level `oracle-pr-loop` invocation,
+it starts a new workflow from durable GitHub state for the original entry path:
+before PR creation, restart issue planning from the current Issue state; for an
+existing PR or after PR creation, freeze the then-current PR head, re-read
+durable feedback, and run the normal PR review flow. Do not carry forward
+indeterminate leaf output or other timeout-local state. The loop does not invoke
+`oracle-pr-feedback-plan`, so transport failure in that optional standalone
+skill cannot stop PR review/fix progress.
 
 `oracle-pr-review` also never replays a timed-out review, because publication
 may already have happened. Each review prompt carries a unique hidden
